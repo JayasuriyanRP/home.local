@@ -1,0 +1,86 @@
+name: jay-home-access
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+services:
+  # --- n8n Sidecar ---
+  ts-n8n:
+    image: ${TAILSCALE_IMAGE:-tailscale/tailscale:latest}
+    container_name: ts-n8n
+    hostname: n8n # Accessible as http://n8n via MagicDNS
+    environment:
+      - TS_AUTHKEY=${TS_AUTH_KEY_N8N:-${TS_AUTH_KEY}}
+      - TS_HOSTNAME=${TS_HOSTNAME_N8N:-n8n}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_AUTH_ONCE=true
+    volumes:
+      - /home/docker-volumes/tailscale-n8n:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    logging: *default-logging
+
+  n8n:
+    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:latest}
+    container_name: n8n
+    network_mode: service:ts-n8n
+    depends_on: [ts-n8n]
+    environment:
+      - TZ=${TIMEZONE}
+      - WEBHOOK_URL=${TS_TUNNEL}
+      - N8N_EDITOR_BASE_URL=${TS_TUNNEL}
+      - N8N_PROXY_HOPS=1
+    volumes:
+      - /home/docker-volumes/n8n:/home/node/.n8n
+    restart: unless-stopped
+    logging: *default-logging
+
+  # --- OpenClaw Sidecar ---
+  ts-openclaw:
+    image: ${TAILSCALE_IMAGE:-tailscale/tailscale:latest}
+    container_name: ts-openclaw
+    hostname: openclaw
+    environment:
+      - TS_AUTHKEY=${TS_AUTH_KEY_OPENCLAW:-${TS_AUTH_KEY}}
+      - TS_HOSTNAME=${TS_HOSTNAME_OPENCLAW:-openclaw}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_AUTH_ONCE=true
+    volumes:
+      - /home/docker-volumes/tailscale-openclaw:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    logging: *default-logging
+
+  openclaw:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    container_name: openclaw
+    network_mode: service:ts-openclaw
+    depends_on: [ts-openclaw]
+    environment:
+      - TZ=${TIMEZONE:-UTC}
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_TOKEN}
+      - OPENCLAW_GATEWAY_HOST=0.0.0.0
+    volumes:
+      - /home/docker-volumes/openclaw/data:/home/node/.openclaw
+    restart: unless-stopped
+    logging: *default-logging
+
+  twingate-connector:
+    image: ${TWINGATE_IMAGE:-twingate/connector:1}
+    container_name: twingate-connector
+    network_mode: "host" # Required so the connector can reach LAN services directly.
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      TWINGATE_NETWORK: ${TWINGATE_NETWORK}
+      TWINGATE_ACCESS_TOKEN: ${TWINGATE_ACCESS_TOKEN}
+      TWINGATE_REFRESH_TOKEN: ${TWINGATE_REFRESH_TOKEN}
+      TWINGATE_LABEL_HOSTNAME: ${TWINGATE_LABEL_HOSTNAME}
+      TWINGATE_LABEL_DEPLOYED_BY: "docker"
+      TZ: ${TIMEZONE}
